@@ -1,0 +1,10 @@
+node_modules
+dist
+.wrangler
+wrangler.production.jsonc
+.dev.vars
+.env
+.data
+*.log
+.DS_Store
+*.tsbuildinfo
