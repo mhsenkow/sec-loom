@@ -132,9 +132,17 @@ export default function App() {
         <div className="lag-banner">
           <FileWarning size={15} />
           <p>
-            <strong>{isLive ? "Live SEC pipeline:" : "Demonstration data:"}</strong>{" "}
+            <strong>
+              {isLive
+                ? dataLabel === "Synced SEC snapshot"
+                  ? "Synced SEC snapshot:"
+                  : "Live SEC pipeline:"
+                : "Demonstration data:"}
+            </strong>{" "}
             {isLive
-              ? "latest complete 13F positions plus current Forms 3/4/5; 13F holdings remain delayed up to 45 days."
+              ? dataLabel === "Synced SEC snapshot"
+                ? "published from the latest local ingestion into GitHub Pages; attach Neon + Hyperdrive for continuous refresh."
+                : "latest complete 13F positions plus current Forms 3/4/5; 13F holdings remain delayed up to 45 days."
               : "visual values are synthetic and must not be treated as current filings. Connect Postgres + Hyperdrive to replace them."}
           </p>
           <button>Understand the dataset</button>

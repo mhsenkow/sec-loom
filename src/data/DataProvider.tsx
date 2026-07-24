@@ -12,27 +12,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [value, setValue] = useState<DataContextValue>(fallbackData);
 
   const refresh = useCallback(async () => {
-    const apiBase = import.meta.env.VITE_API_BASE_URL ?? "";
     try {
-      const response = await fetch(`${apiBase}/api/dashboard`, {
-        headers: { Accept: "application/json" },
-      });
-      if (!response.ok) return;
-      const payload = await response.json() as {
-        data?: {
-          managers?: RawManager[];
-          diffs?: RawDiff[];
-          consensus?: RawConsensus[];
-          insiders?: RawInsider[];
-        };
-        meta?: {
-          data_status?: string;
-          freshness?: Freshness[];
-          as_of?: string;
-        };
-      };
-      if (payload.meta?.data_status !== "live" || !payload.data) return;
-      setValue(mapLivePayload(payload.data, payload.meta.freshness ?? [], payload.meta.as_of));
+      const payload = await loadDashboardPayload();
+      if (!payload?.data || payload.meta?.data_status !== "live") return;
+      setValue(
+        mapLivePayload(
+          payload.data,
+          payload.meta.freshness ?? [],
+          payload.meta.as_of,
+          payload.meta.delivery === "static_snapshot" ? "snapshot" : "live",
+        ),
+      );
     } catch {
       // The product proof remains explicitly labeled as demonstration data.
     }
@@ -102,6 +92,41 @@ interface RawInsider {
   issuer_name: string;
 }
 
+interface DashboardPayload {
+  data?: {
+    managers?: RawManager[];
+    diffs?: RawDiff[];
+    consensus?: RawConsensus[];
+    insiders?: RawInsider[];
+  };
+  meta?: {
+    data_status?: string;
+    freshness?: Freshness[];
+    as_of?: string;
+    delivery?: string;
+  };
+}
+
+async function loadDashboardPayload(): Promise<DashboardPayload | null> {
+  const apiBase = import.meta.env.VITE_API_BASE_URL ?? "";
+  const candidates = [
+    `${apiBase}/api/dashboard`,
+    `${import.meta.env.BASE_URL}dashboard.json`,
+  ];
+
+  for (const url of candidates) {
+    try {
+      const response = await fetch(url, { headers: { Accept: "application/json" } });
+      if (!response.ok) continue;
+      const payload = await response.json() as DashboardPayload;
+      if (payload.meta?.data_status === "live" && payload.data) return payload;
+    } catch {
+      // Try the next source; mock data remains the final fallback.
+    }
+  }
+  return null;
+}
+
 function mapLivePayload(
   raw: {
     managers?: RawManager[];
@@ -111,6 +136,7 @@ function mapLivePayload(
   },
   freshness: Freshness[],
   asOf?: string,
+  delivery: "live" | "snapshot" = "live",
 ): DataContextValue {
   const rawDiffs = raw.diffs ?? [];
   const rawConsensus = raw.consensus ?? [];
@@ -207,7 +233,7 @@ function mapLivePayload(
     periods: period ? [quarterLabel(period)] : [],
     freshness,
     isLive: true,
-    dataLabel: "Live SEC ingestion",
+    dataLabel: delivery === "snapshot" ? "Synced SEC snapshot" : "Live SEC ingestion",
     reportPeriod: period,
     lastRefreshed: filingFreshness?.last_ingested_at ?? null,
   };

@@ -70,7 +70,16 @@ The static UI is published from `main` via `.github/workflows/pages.yml` at:
 
 https://mhsenkow.github.io/sec-loom/
 
-The Pages build uses demonstration data unless a live API origin is configured. Local `npm run build` still defaults to `/` for Worker hosting.
+GitHub Pages cannot host Postgres or the Worker. The site loads synced SEC data from `public/dashboard.json` (exported from the local live API). Refresh the snapshot after ingestion:
+
+```bash
+npm run worker:dev
+# in another terminal
+npm run snapshot:export
+git add public/dashboard.json && git commit -m "Refresh SEC dashboard snapshot" && git push
+```
+
+For continuously live data, attach Neon + Hyperdrive and set `VITE_API_BASE_URL` to the deployed Worker origin. Local `npm run build` still defaults to `/` for Worker hosting.
 
 ## Production deployment
 
