@@ -158,17 +158,27 @@ async function storeResolution(
         VALUES ($1, $2, $3, $4, $5, $6, $7, 0.9500, 'OPENFIGI')
         ON CONFLICT (figi) DO UPDATE SET
           composite_figi = coalesce(EXCLUDED.composite_figi, securities.composite_figi),
-          ticker = coalesce(EXCLUDED.ticker, securities.ticker),
-          issuer_name = coalesce(EXCLUDED.issuer_name, securities.issuer_name),
+          -- Prefer a real OpenFIGI ticker when the existing row is still unresolved.
+          ticker = coalesce(securities.ticker, EXCLUDED.ticker),
+          issuer_name = CASE
+            WHEN securities.issuer_name ILIKE 'CUSIP %' THEN EXCLUDED.issuer_name
+            ELSE coalesce(securities.issuer_name, EXCLUDED.issuer_name)
+          END,
+          primary_cusip = coalesce(securities.primary_cusip, EXCLUDED.primary_cusip),
           exchange_code = coalesce(EXCLUDED.exchange_code, securities.exchange_code),
           security_type = coalesce(EXCLUDED.security_type, securities.security_type),
+          resolution_confidence = greatest(
+            coalesce(securities.resolution_confidence, 0),
+            EXCLUDED.resolution_confidence
+          ),
+          resolution_method = coalesce(securities.resolution_method, EXCLUDED.resolution_method),
           updated_at = now()
         RETURNING security_id
       `,
       [
         instrument.figi,
         instrument.compositeFIGI,
-        instrument.ticker,
+        instrument.ticker ? instrument.ticker.toUpperCase() : null,
         instrument.name ?? instrument.ticker ?? `CUSIP ${cusip}`,
         cusip,
         instrument.exchCode,
@@ -223,7 +233,7 @@ async function storeFailure(
     `
       UPDATE resolution_queue
       SET status = $2, locked_at = NULL, last_error = $3,
-          next_attempt_at = now() + make_interval(mins => least(1440, 5 * (2 ^ attempts))),
+          next_attempt_at = now() + make_interval(mins => least(1440, (5 * (2 ^ attempts))::integer)),
           updated_at = now()
       WHERE cusip = $1
     `,

@@ -117,15 +117,9 @@ export const holdingDiffs: HoldingDiff[] = managers.flatMap((manager, managerInd
 );
 
 export const insiderTrades: InsiderTrade[] = [
-  { ticker: "AMZN", insider: "Douglas Herrington", role: "CEO, Worldwide Stores", value: 1_240_000, date: "May 09", accession: "0001018724-25-000071" },
-  { ticker: "UNH", insider: "Stephen Hemsley", role: "Board Chair", value: 5_020_000, date: "May 16", accession: "0000731766-25-000143" },
-  { ticker: "V", insider: "Teri List", role: "Director", value: 486_000, date: "May 12", accession: "0001403161-25-000056" },
+  { ticker: "AMZN", issuer: "Amazon.com Inc.", insider: "Douglas Herrington", role: "CEO, Worldwide Stores", value: 1_240_000, date: "May 09", accession: "0001018724-25-000071" },
+  { ticker: "UNH", issuer: "UnitedHealth Group", insider: "Stephen Hemsley", role: "Board Chair", value: 5_020_000, date: "May 16", accession: "0000731766-25-000143" },
+  { ticker: "V", issuer: "Visa Inc.", insider: "Teri List", role: "Director", value: 486_000, date: "May 12", accession: "0001403161-25-000056" },
 ];
 
-export const formatMoney = (value: number, precise = false) => {
-  const absolute = Math.abs(value);
-  const sign = value < 0 ? "−" : "";
-  if (absolute >= 1_000_000) return `${sign}$${(absolute / 1_000_000).toFixed(1)}T`;
-  if (absolute >= 1_000) return `${sign}$${(absolute / 1_000).toFixed(precise ? 2 : 1)}B`;
-  return `${sign}$${absolute.toFixed(precise ? 1 : 0)}M`;
-};
+export { formatMoney } from "../utils/format";

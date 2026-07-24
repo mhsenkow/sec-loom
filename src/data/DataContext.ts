@@ -6,7 +6,15 @@ import {
   managers as demoManagers,
   securities as demoSecurities,
 } from "./mockData";
-import type { HoldingDiff, InsiderTrade, Manager, Security } from "../types";
+import type {
+  DashboardAggregates,
+  DataDelivery,
+  HoldingDiff,
+  InsiderTrade,
+  Manager,
+  Security,
+} from "../types";
+import { coverageFrom } from "./chartData";
 
 export interface Freshness {
   dataset: string;
@@ -26,10 +34,17 @@ export interface DataContextValue {
   periods: string[];
   freshness: Freshness[];
   isLive: boolean;
+  isContinuous: boolean;
+  delivery: DataDelivery;
   dataLabel: string;
   reportPeriod: string;
   lastRefreshed: string | null;
+  coveragePct: number | null;
+  aggregates: DashboardAggregates | null;
+  sampleNote: string;
 }
+
+const demoCoverage = coverageFrom(demoSecurities, demoDiffs, demoManagers);
 
 export const fallbackData: DataContextValue = {
   managers: demoManagers,
@@ -39,9 +54,34 @@ export const fallbackData: DataContextValue = {
   periods: demoPeriods,
   freshness: [],
   isLive: false,
+  isContinuous: false,
+  delivery: "demo",
   dataLabel: "Demonstration snapshot",
   reportPeriod: "2025-03-31",
   lastRefreshed: null,
+  coveragePct: null,
+  aggregates: {
+    actionMix: {
+      NEW: demoDiffs.filter((d) => d.action === "NEW").length,
+      ADD: demoDiffs.filter((d) => d.action === "ADD").length,
+      TRIM: demoDiffs.filter((d) => d.action === "TRIM").length,
+      EXIT: demoDiffs.filter((d) => d.action === "EXIT").length,
+      HOLD: demoDiffs.filter((d) => d.action === "HOLD").length,
+      activeTotal: demoDiffs.filter((d) => d.action !== "HOLD").length,
+    },
+    coverage: {
+      tickerPct: demoCoverage.tickerPct,
+      sectorPct: demoCoverage.sectorPct,
+      resolutionPct: 98.6,
+    },
+    totals: {
+      diffCount: demoDiffs.length,
+      consensusCount: demoSecurities.length,
+      managerCount: demoManagers.length,
+      insiderCount: demoInsiders.length,
+    },
+  },
+  sampleNote: "Demonstration values for layout and interaction review.",
 };
 
 export const DataContext = createContext<DataContextValue>(fallbackData);

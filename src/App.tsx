@@ -40,8 +40,17 @@ export default function App() {
   const [themeMenu, setThemeMenu] = useState(false);
   const [mobileNav, setMobileNav] = useState(false);
   const { theme, setTheme, mode } = useTheme();
-  const { isLive, dataLabel, periods, lastRefreshed } = useData();
+  const {
+    isLive,
+    isContinuous,
+    dataLabel,
+    periods,
+    lastRefreshed,
+    coveragePct,
+    delivery,
+  } = useData();
   const closeCitation = useCallback(() => setCitation(null), []);
+  const coverageLabel = coveragePct == null ? "—" : `${coveragePct.toFixed(1)}%`;
 
   const changeView = (nextView: View) => {
     setView(nextView);
@@ -72,7 +81,11 @@ export default function App() {
           <div className="as-of">
             <Clock3 size={14} />
             <span>{dataLabel}</span>
-            <strong>{isLive && lastRefreshed ? `Synced ${formatDate(lastRefreshed)}` : "Synthetic values"}</strong>
+            <strong>
+              {isLive && lastRefreshed
+                ? `${delivery === "snapshot" ? "Snapshot" : "Synced"} ${formatDate(lastRefreshed)}`
+                : "Synthetic values"}
+            </strong>
           </div>
           <button className="icon-button" aria-label="Notifications"><Bell size={16} /><i className="notification-dot" /></button>
           <div className="theme-picker">
@@ -110,7 +123,11 @@ export default function App() {
             <button key={item.id} className={view === item.id ? "active" : ""} onClick={() => changeView(item.id)}>
               <item.icon size={17} />
               <span>{item.label}</span>
-              {item.id === "grid" && <em>LIVE</em>}
+              {item.id === "grid" && (
+                <em className={isContinuous ? "" : "muted"}>
+                  {isContinuous ? "LIVE" : isLive ? "SYNC" : "DEMO"}
+                </em>
+              )}
             </button>
           ))}
           <span className="nav-label">Research</span>
@@ -120,9 +137,17 @@ export default function App() {
         </nav>
         <div className="sidebar-foot">
           <div className="coverage-card">
-            <div><span>Resolution coverage</span><strong>98.6%</strong></div>
-            <div className="coverage-track"><i style={{ width: "98.6%" }} /></div>
-            <small>By reported value · FIGI-first</small>
+            <div><span>Resolution coverage</span><strong>{coverageLabel}</strong></div>
+            <div className="coverage-track">
+              <i style={{ width: `${Math.min(Math.max(coveragePct ?? 0, 0), 100)}%` }} />
+            </div>
+            <small>
+              {isContinuous
+                ? "By reported value · FIGI-first"
+                : isLive
+                  ? "Snapshot sample · FIGI-first"
+                  : "Demonstration coverage"}
+            </small>
           </div>
           <button><CircleHelp size={16} /> Methodology & scope</button>
         </div>
@@ -133,17 +158,17 @@ export default function App() {
           <FileWarning size={15} />
           <p>
             <strong>
-              {isLive
-                ? dataLabel === "Synced SEC snapshot"
+              {isContinuous
+                ? "Live SEC pipeline:"
+                : isLive
                   ? "Synced SEC snapshot:"
-                  : "Live SEC pipeline:"
-                : "Demonstration data:"}
+                  : "Demonstration data:"}
             </strong>{" "}
-            {isLive
-              ? dataLabel === "Synced SEC snapshot"
+            {isContinuous
+              ? "latest complete 13F positions plus current Forms 3/4/5; 13F holdings remain delayed up to 45 days."
+              : isLive
                 ? "published from the latest local ingestion into GitHub Pages; attach Neon + Hyperdrive for continuous refresh."
-                : "latest complete 13F positions plus current Forms 3/4/5; 13F holdings remain delayed up to 45 days."
-              : "visual values are synthetic and must not be treated as current filings. Connect Postgres + Hyperdrive to replace them."}
+                : "visual values are synthetic and must not be treated as current filings. Connect Postgres + Hyperdrive to replace them."}
           </p>
           <button>Understand the dataset</button>
         </div>

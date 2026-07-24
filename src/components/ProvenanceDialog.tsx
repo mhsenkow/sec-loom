@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { ArrowUpRight, CheckCircle2, Copy, ExternalLink, FileText, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useData } from "../data/DataContext";
-import { formatMoney } from "../data/mockData";
+import { formatMoney, quarterLabel, securityDisplay } from "../utils/format";
 import type { HoldingDiff } from "../types";
 
 interface ProvenanceDialogProps {
@@ -72,22 +72,26 @@ export function ProvenanceDialog({ diff, onClose }: ProvenanceDialogProps) {
             <ArrowUpRight size={18} />
             <div>
               <span>Security</span>
-              <strong>{security?.ticker} · {security?.issuer}</strong>
-              <small>{security?.figi}</small>
+              <strong>
+                {security ? securityDisplay(security) : "Unresolved"} · {security?.issuer}
+              </strong>
+              <small>{security?.figi === "Unresolved" ? "FIGI unresolved" : security?.figi}</small>
             </div>
           </div>
 
           <dl className="citation-values">
             <div><dt>As-filed value</dt><dd>{formatMoney(diff.value, true)}</dd></div>
             <div><dt>Previous value</dt><dd>{formatMoney(diff.previousValue, true)}</dd></div>
-            <div><dt>Derived change</dt><dd className={diff.delta >= 0 ? "up" : "down"}>{formatMoney(diff.delta, true)}</dd></div>
-            <div><dt>Shares reported</dt><dd>{diff.shares.toLocaleString()}</dd></div>
+            <div><dt>Derived value Δ</dt><dd className={diff.delta >= 0 ? "up" : "down"}>{formatMoney(diff.delta, true)}</dd></div>
+            <div><dt>Shares / action</dt><dd>{diff.shares.toLocaleString()} · {diff.action}</dd></div>
           </dl>
 
           <div className="accession-block">
             <span>Accession number</span>
             <code>{diff.accession}</code>
-            <small>Filed {diff.filedAt} · period of report {reportPeriod}</small>
+            <small>
+              Filed {diff.filedAt} · period of report {quarterLabel(reportPeriod)} ({reportPeriod.slice(0, 10)})
+            </small>
           </div>
 
           {diff.isAmendment && (

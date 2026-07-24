@@ -67,7 +67,13 @@ try {
 
     case "resolve":
       await requireSchema();
-      await resolveOpenFigiQueue(pool, config, logger, Number(argument ?? 1_000));
+      try {
+        await resolveOpenFigiQueue(pool, config, logger, Number(argument ?? 1_000));
+      } catch (error) {
+        logger.error("openfigi_resolution_failed", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
       await enrichWithSecTickers(pool, sec, logger);
       break;
 

@@ -6,7 +6,17 @@ import {
   type DataContextValue,
   type Freshness,
 } from "./DataContext";
-import type { Action, HoldingDiff, InsiderTrade, Manager, Security } from "../types";
+import { coverageFrom, storySampleNote } from "./chartData";
+import { formatShortDate, quarterLabel, shortenName } from "../utils/format";
+import type {
+  Action,
+  DashboardAggregates,
+  DataDelivery,
+  HoldingDiff,
+  InsiderTrade,
+  Manager,
+  Security,
+} from "../types";
 
 export function DataProvider({ children }: { children: ReactNode }) {
   const [value, setValue] = useState<DataContextValue>(fallbackData);
@@ -21,9 +31,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
           payload.meta.freshness ?? [],
           payload.meta.as_of,
           payload.meta.delivery === "static_snapshot" ? "snapshot" : "live",
+          payload.data.aggregates ?? null,
         ),
       );
-    } catch {
+    } catch (error) {
+      console.warn("dashboard_payload_mapping_failed", error);
       // The product proof remains explicitly labeled as demonstration data.
     }
   }, []);
@@ -47,6 +59,7 @@ interface RawManager {
   latest_13f_period: string;
   latest_13f_filed_at: string;
   latest_reported_value_usd: string;
+  coverage_pct?: string | number | null;
 }
 
 interface RawDiff {
@@ -67,6 +80,8 @@ interface RawDiff {
   pct_portfolio_curr: string | null;
   input_accessions: string[];
   period_curr: string;
+  filed_at?: string | null;
+  is_amendment?: boolean;
 }
 
 interface RawConsensus {
@@ -90,6 +105,7 @@ interface RawInsider {
   transaction_date: string;
   ticker: string | null;
   issuer_name: string;
+  issuer_cik?: string;
 }
 
 interface DashboardPayload {
@@ -98,6 +114,7 @@ interface DashboardPayload {
     diffs?: RawDiff[];
     consensus?: RawConsensus[];
     insiders?: RawInsider[];
+    aggregates?: DashboardAggregates;
   };
   meta?: {
     data_status?: string;
@@ -133,49 +150,55 @@ function mapLivePayload(
     diffs?: RawDiff[];
     consensus?: RawConsensus[];
     insiders?: RawInsider[];
+    aggregates?: DashboardAggregates;
   },
   freshness: Freshness[],
-  asOf?: string,
-  delivery: "live" | "snapshot" = "live",
+  asOf: string | undefined,
+  delivery: Exclude<DataDelivery, "demo">,
+  aggregates: DashboardAggregates | null,
 ): DataContextValue {
   const rawDiffs = raw.diffs ?? [];
   const rawConsensus = raw.consensus ?? [];
   const rawInsiders = raw.insiders ?? [];
   const period = asOf ?? rawConsensus[0]?.period ?? rawDiffs[0]?.period_curr ?? "";
   const filingFreshness = freshness.find((item) => item.dataset === "13F");
-  const filedAt = filingFreshness?.source_max_filed_at?.slice(0, 10) ?? period;
-  const insiderTickers = new Set(rawInsiders.map((item) => item.ticker).filter(Boolean));
+  const filedAt = filingFreshness?.source_max_filed_at?.slice(0, 10) ?? period.slice(0, 10);
+  const insiderTickers = new Set(
+    rawInsiders.map((item) => item.ticker).filter((ticker): ticker is string => Boolean(ticker)),
+  );
 
   const consensusBySecurity = new Map(
     rawConsensus.map((item) => [item.security_id, item]),
   );
-  const diffBySecurity = new Map<string, RawDiff>();
-  for (const item of rawDiffs) {
-    if (!diffBySecurity.has(item.security_id)) diffBySecurity.set(item.security_id, item);
-  }
   const securityIds = [
     ...new Set([
       ...rawDiffs.map((item) => item.security_id),
       ...rawConsensus.map((item) => item.security_id),
     ]),
   ];
+
   const securities: Security[] = securityIds.map((securityId) => {
     const consensus = consensusBySecurity.get(securityId);
-    const diff = diffBySecurity.get(securityId);
+    const relatedDiffs = rawDiffs.filter((item) => item.security_id === securityId);
+    const diff = relatedDiffs[0];
     const ticker = consensus?.ticker ?? diff?.ticker ?? null;
     const issuer = consensus?.issuer_name ?? diff?.issuer_name ?? "Unresolved security";
+    const hasConsensus = Boolean(consensus);
     return {
       id: securityId,
-      ticker: ticker ?? compactIssuer(issuer),
+      ticker,
       issuer,
       sector: consensus?.sector ?? diff?.sector ?? "Unclassified",
       figi: consensus?.figi ?? diff?.figi ?? "Unresolved",
       holderCount: Number(consensus?.holder_count ?? 0),
-      netFlow: toMillions(consensus?.net_flow_usd ?? diff?.delta_value ?? 0),
-      aggregateValue: toMillions(consensus?.aggregate_value_usd ?? diff?.value_curr ?? 0),
+      netFlow: hasConsensus ? toMillions(consensus?.net_flow_usd ?? 0) : null,
+      aggregateValue: toMillions(
+        consensus?.aggregate_value_usd ?? diff?.value_curr ?? 0,
+      ),
       insiderSignal:
         Number(consensus?.insider_open_market_buy_count ?? 0) > 0 ||
         (ticker ? insiderTickers.has(ticker) : false),
+      hasConsensus,
     };
   });
 
@@ -190,40 +213,67 @@ function mapLivePayload(
       delta: toMillions(item.delta_value),
       shares: Number(item.shares_curr),
       accession: item.input_accessions?.at(-1) ?? "unavailable",
-      filedAt,
+      filedAt: item.filed_at?.slice(0, 10) ?? filedAt,
+      period: item.period_curr?.slice(0, 10) ?? period.slice(0, 10),
+      isAmendment: Boolean(item.is_amendment),
     }));
 
   const managersByCik = new Map((raw.managers ?? []).map((item) => [item.cik, item]));
-  const managerCiks = [
-    ...new Set([
-      ...rawDiffs.map((item) => item.cik),
-      ...(raw.managers ?? []).map((item) => item.cik),
-    ]),
-  ];
-  const managers: Manager[] = managerCiks.map((cik) => {
+  const activeManagerCiks = [...new Set(rawDiffs.map((item) => item.cik))];
+  const managers: Manager[] = activeManagerCiks.map((cik) => {
     const item = managersByCik.get(cik);
     const moves = holdingDiffs.filter((diff) => diff.managerCik === cik);
     const adds = moves.filter((diff) => diff.action === "ADD" || diff.action === "NEW").length;
     const trims = moves.filter((diff) => diff.action === "TRIM" || diff.action === "EXIT").length;
+    const name = item?.name ?? rawDiffs.find((diff) => diff.cik === cik)?.manager_name ?? cik;
     return {
       cik,
-      name: item?.name ?? rawDiffs.find((diff) => diff.cik === cik)?.manager_name ?? cik,
-      shortName: shortenName(item?.name ?? rawDiffs.find((diff) => diff.cik === cik)?.manager_name ?? cik),
+      name,
+      shortName: shortenName(name),
       aum: toMillions(item?.latest_reported_value_usd ?? 0),
-      coverage: Number(filingFreshness?.coverage_pct ?? 0),
+      coverage:
+        item?.coverage_pct == null
+          ? null
+          : Number(item.coverage_pct),
       status: `Filed ${item?.latest_13f_filed_at?.slice(0, 10) ?? filedAt}`,
       brief: `${adds} reported additions and ${trims} trims or exits in the latest complete quarter.`,
+      moveCount: moves.filter((diff) => diff.action !== "HOLD").length,
     };
-  });
+  }).sort((a, b) => (b.moveCount ?? 0) - (a.moveCount ?? 0) || b.aum - a.aum);
 
   const insiderTrades: InsiderTrade[] = rawInsiders.map((item) => ({
-    ticker: item.ticker ?? "—",
+    ticker: item.ticker,
+    issuer: item.issuer_name,
     insider: item.insider_name,
     role: item.role ?? item.issuer_name,
     value: Number(item.value_usd ?? 0),
     date: formatShortDate(item.transaction_date),
     accession: item.accession_number,
   }));
+
+  const coverage = coverageFrom(securities, holdingDiffs, managers);
+  const resolutionPct = Number(filingFreshness?.coverage_pct ?? aggregates?.coverage.resolutionPct ?? 0);
+  const derivedAggregates: DashboardAggregates = aggregates ?? {
+    actionMix: {
+      NEW: holdingDiffs.filter((d) => d.action === "NEW").length,
+      ADD: holdingDiffs.filter((d) => d.action === "ADD").length,
+      TRIM: holdingDiffs.filter((d) => d.action === "TRIM").length,
+      EXIT: holdingDiffs.filter((d) => d.action === "EXIT").length,
+      HOLD: holdingDiffs.filter((d) => d.action === "HOLD").length,
+      activeTotal: holdingDiffs.filter((d) => d.action !== "HOLD").length,
+    },
+    coverage: {
+      tickerPct: coverage.tickerPct,
+      sectorPct: coverage.sectorPct,
+      resolutionPct,
+    },
+    totals: {
+      diffCount: holdingDiffs.length,
+      consensusCount: rawConsensus.length,
+      managerCount: managers.length,
+      insiderCount: insiderTrades.length,
+    },
+  };
 
   return {
     managers,
@@ -233,9 +283,21 @@ function mapLivePayload(
     periods: period ? [quarterLabel(period)] : [],
     freshness,
     isLive: true,
+    isContinuous: delivery === "live",
+    delivery,
     dataLabel: delivery === "snapshot" ? "Synced SEC snapshot" : "Live SEC ingestion",
-    reportPeriod: period,
+    reportPeriod: period.slice(0, 10),
     lastRefreshed: filingFreshness?.last_ingested_at ?? null,
+    coveragePct: resolutionPct || null,
+    aggregates: {
+      ...derivedAggregates,
+      coverage: {
+        ...derivedAggregates.coverage,
+        tickerPct: coverage.tickerPct,
+        sectorPct: coverage.sectorPct,
+      },
+    },
+    sampleNote: storySampleNote(coverage),
   };
 }
 
@@ -245,34 +307,4 @@ function toMillions(value: string | number) {
 
 function isAction(value: string): value is Action {
   return ["NEW", "ADD", "TRIM", "EXIT", "HOLD"].includes(value);
-}
-
-function quarterLabel(date: string) {
-  const value = new Date(`${date.slice(0, 10)}T00:00:00Z`);
-  const quarter = Math.floor(value.getUTCMonth() / 3) + 1;
-  return `Q${quarter} ${value.getUTCFullYear()}`;
-}
-
-function formatShortDate(date: string) {
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "2-digit", timeZone: "UTC" })
-    .format(new Date(`${date.slice(0, 10)}T00:00:00Z`));
-}
-
-function shortenName(name: string) {
-  return name
-    .replace(/\b(Management|Advisors?|Associates|Capital|Investments?|LLC|LP|Inc\.?)\b/gi, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 18);
-}
-
-function compactIssuer(name: string) {
-  const words = name
-    .replace(/\b(inc|corp|corporation|company|co|plc|ltd|class|com|common)\b/gi, "")
-    .replace(/[^a-z0-9 ]/gi, " ")
-    .split(/\s+/)
-    .filter(Boolean);
-  if (words.length === 0) return "UNRES";
-  if (words.length === 1) return words[0].slice(0, 8).toUpperCase();
-  return words.slice(0, 4).map((word) => word[0]).join("").toUpperCase();
 }

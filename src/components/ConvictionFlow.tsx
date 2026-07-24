@@ -1,45 +1,34 @@
-import { motion } from "framer-motion";
-import { Pause, Play, RotateCcw } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { motion, useReducedMotion } from "framer-motion";
+import { useMemo } from "react";
 import { useData } from "../data/DataContext";
-import { formatMoney } from "../data/mockData";
-
-const colors = [
-  "var(--positive)",
-  "var(--accent)",
-  "var(--accent-2)",
-  "var(--sun)",
-  "var(--negative)",
-];
+import { hasSectorCoverage, summarizeNet, topMoves } from "../data/chartData";
+import { formatMoney } from "../utils/format";
+import { robustWidth } from "../utils/scales";
 
 export function ConvictionFlow() {
-  const { holdingDiffs, managers, securities, periods } = useData();
-  const [periodIndex, setPeriodIndex] = useState(0);
-  const [playing, setPlaying] = useState(periods.length > 1);
+  const { holdingDiffs, managers, securities, periods, sampleNote } = useData();
+  const reduceMotion = useReducedMotion();
+  const useSectors = hasSectorCoverage(securities);
 
   const streams = useMemo(() => {
-    const maxDelta = Math.max(...holdingDiffs.map((diff) => Math.abs(diff.delta)), 1);
-    return [...holdingDiffs]
-      .filter((diff) => diff.delta !== 0)
-      .sort((left, right) => Math.abs(right.delta) - Math.abs(left.delta))
-      .slice(0, 5)
-      .map((diff, index) => {
-        const manager = managers.find((item) => item.cik === diff.managerCik);
-        const security = securities.find((item) => item.id === diff.securityId);
-        return {
-          id: `${diff.managerCik}-${diff.securityId}`,
-          manager: manager?.shortName ?? diff.managerCik,
-          sector: security?.sector ?? "Unclassified",
-          security: security?.ticker ?? "UNRES",
-          width: 5 + (Math.abs(diff.delta) / maxDelta) * 12,
-          color: diff.delta < 0 ? "var(--negative)" : colors[index % colors.length],
-          delta: diff.delta,
-        };
-      });
-  }, [holdingDiffs, managers, securities]);
+    const moves = topMoves(holdingDiffs, managers, securities, 6);
+    const maxDelta = Math.max(...moves.map((item) => Math.abs(item.delta)), 1);
+    return moves.map((diff) => ({
+      id: `${diff.managerCik}-${diff.securityId}`,
+      manager: diff.managerLabel,
+      middle: useSectors
+        ? (diff.security?.sector ?? "Unclassified")
+        : diff.action,
+      security: diff.label,
+      width: robustWidth(diff.delta, maxDelta, 3.5, 14),
+      color: diff.delta < 0 ? "var(--negative)" : "var(--positive)",
+      delta: diff.delta,
+      action: diff.action,
+    }));
+  }, [holdingDiffs, managers, securities, useSectors]);
 
-  const sectorPositions = useMemo(
-    () => positions([...new Set(streams.map((stream) => stream.sector))]),
+  const middlePositions = useMemo(
+    () => positions([...new Set(streams.map((stream) => stream.middle))]),
     [streams],
   );
   const securityPositions = useMemo(
@@ -47,17 +36,7 @@ export function ConvictionFlow() {
     [streams],
   );
   const managerPositions = positions(streams.map((stream) => stream.id));
-  const grossFlow = streams.reduce((sum, stream) => sum + Math.max(stream.delta, 0), 0);
-  const visiblePeriodIndex = Math.min(periodIndex, Math.max(periods.length - 1, 0));
-
-  useEffect(() => {
-    if (!playing || periods.length < 2) return;
-    const timer = window.setInterval(
-      () => setPeriodIndex((index) => (index + 1) % periods.length),
-      2800,
-    );
-    return () => window.clearInterval(timer);
-  }, [periods.length, playing]);
+  const totals = summarizeNet(streams.map((stream) => stream.delta));
 
   return (
     <section className="hero-panel flow-panel" aria-labelledby="flow-title">
@@ -65,103 +44,133 @@ export function ConvictionFlow() {
         <div>
           <span className="eyebrow">Capital choreography</span>
           <h2 id="flow-title">Conviction Flow</h2>
-          <p>Trace the largest reported changes from manager to sector to security.</p>
+          <p>
+            Largest reported value changes from manager to{" "}
+            {useSectors ? "sector" : "action"} to security. Share actions and dollar deltas can disagree.
+          </p>
         </div>
-        <div className="live-badge">
-          <span /> {periods.length > 1 ? "Playback" : "Latest complete"} · {periods[visiblePeriodIndex] ?? "Unavailable"}
+        <div className="live-badge muted">
+          <span /> Latest complete · {periods[0] ?? "Unavailable"}
         </div>
       </header>
 
-      <div className="flow-stage">
-        <div className="flow-labels">
-          <span>Managers</span><span>Sectors</span><span>Securities</span>
+      {streams.length === 0 ? (
+        <div className="empty-signal hero-empty">
+          <strong>No material reported moves</strong>
+          <p>Flow needs non-zero top moves from the current dashboard sample.</p>
         </div>
-        <svg viewBox="0 0 900 360" role="img" aria-label="Animated manager to security capital flow">
-          <defs>
-            <filter id="streamGlow">
-              <feGaussianBlur stdDeviation="5" result="blur" />
-              <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-            </filter>
-          </defs>
-          {[75, 168, 261].map((y) => <line key={y} className="flow-guide" x1="0" y1={y} x2="900" y2={y} />)}
-          {streams.map((stream, index) => {
-            const startY = managerPositions[stream.id] ?? 180;
-            const middleY = sectorPositions[stream.sector] ?? 180;
-            const endY = securityPositions[stream.security] ?? 180;
-            const path = `M 120 ${startY} C 245 ${startY}, 250 ${middleY}, 400 ${middleY} C 560 ${middleY}, 600 ${endY}, 760 ${endY}`;
-            return (
-              <g key={stream.id}>
-                <motion.path
-                  d={path}
-                  fill="none"
-                  stroke={stream.color}
-                  strokeOpacity="0.12"
-                  strokeWidth={stream.width + 10}
-                  animate={{ strokeOpacity: [0.08, 0.16, 0.08] }}
-                  transition={{ duration: 3.4, repeat: Infinity, delay: index * 0.3 }}
-                />
-                <motion.path
-                  d={path}
-                  fill="none"
-                  stroke={stream.color}
-                  strokeWidth={stream.width}
-                  strokeLinecap="round"
-                  pathLength="1"
-                  initial={{ pathLength: 0 }}
-                  animate={{ pathLength: 1 }}
-                  transition={{ duration: 1.1, delay: index * 0.12, ease: [0.2, 0, 0, 1] }}
-                />
-                <motion.circle r="4" fill="var(--surface-strong)" stroke={stream.color} strokeWidth="2" filter="url(#streamGlow)">
-                  <animateMotion dur={`${2.8 + index * 0.22}s`} repeatCount="indefinite" path={path} />
-                </motion.circle>
-                <text x="16" y={startY + 4} className="flow-node-label">{stream.manager}</text>
+      ) : (
+        <div className="flow-stage">
+          <div className="flow-labels">
+            <span>Managers</span>
+            <span>{useSectors ? "Sectors" : "Actions"}</span>
+            <span>Securities</span>
+          </div>
+          <svg viewBox="0 0 900 360" role="img" aria-label="Manager to security reported-value flow">
+            <defs>
+              <filter id="streamGlow">
+                <feGaussianBlur stdDeviation="4" result="blur" />
+                <feMerge>
+                  <feMergeNode in="blur" />
+                  <feMergeNode in="SourceGraphic" />
+                </feMerge>
+              </filter>
+            </defs>
+            {[75, 168, 261].map((y) => (
+              <line key={y} className="flow-guide" x1="0" y1={y} x2="900" y2={y} />
+            ))}
+            {streams.map((stream, index) => {
+              const startY = managerPositions[stream.id] ?? 180;
+              const middleY = middlePositions[stream.middle] ?? 180;
+              const endY = securityPositions[stream.security] ?? 180;
+              const path = `M 120 ${startY} C 245 ${startY}, 250 ${middleY}, 400 ${middleY} C 560 ${middleY}, 600 ${endY}, 760 ${endY}`;
+              return (
+                <g key={stream.id}>
+                  <title>
+                    {stream.manager} · {stream.action} · {stream.security}: {formatMoney(stream.delta, true)}
+                  </title>
+                  <motion.path
+                    d={path}
+                    fill="none"
+                    stroke={stream.color}
+                    strokeOpacity="0.14"
+                    strokeWidth={stream.width + 8}
+                    animate={reduceMotion ? undefined : { strokeOpacity: [0.08, 0.18, 0.08] }}
+                    transition={{ duration: 3.4, repeat: Infinity, delay: index * 0.25 }}
+                  />
+                  <motion.path
+                    d={path}
+                    fill="none"
+                    stroke={stream.color}
+                    strokeWidth={stream.width}
+                    strokeLinecap="round"
+                    pathLength="1"
+                    initial={reduceMotion ? false : { pathLength: 0 }}
+                    animate={{ pathLength: 1 }}
+                    transition={{ duration: reduceMotion ? 0 : 0.9, delay: reduceMotion ? 0 : index * 0.08 }}
+                  />
+                  {!reduceMotion && (
+                    <motion.circle
+                      r="3.5"
+                      fill="var(--surface-strong)"
+                      stroke={stream.color}
+                      strokeWidth="2"
+                      filter="url(#streamGlow)"
+                    >
+                      <animateMotion dur={`${3 + index * 0.2}s`} repeatCount="indefinite" path={path} />
+                    </motion.circle>
+                  )}
+                  <text x="16" y={startY + 4} className="flow-node-label">
+                    {stream.manager.slice(0, 16)}
+                  </text>
+                  <text x="770" y={endY - 14} className="flow-delta-label" fill={stream.color}>
+                    {formatMoney(stream.delta, true)}
+                  </text>
+                </g>
+              );
+            })}
+            {Object.entries(middlePositions).map(([label, y]) => (
+              <g key={label}>
+                <rect x="366" y={y - 17} width="98" height="34" rx="2" className="flow-node" />
+                <text x="415" y={y + 4} textAnchor="middle" className="flow-node-label">
+                  {label.slice(0, 14)}
+                </text>
               </g>
-            );
-          })}
-          {Object.entries(sectorPositions).map(([sector, y]) => (
-            <g key={sector}>
-              <rect x="366" y={y - 17} width="98" height="34" rx="2" className="flow-node" />
-              <text x="415" y={y + 4} textAnchor="middle" className="flow-node-label">{sector.slice(0, 14)}</text>
-            </g>
-          ))}
-          {Object.entries(securityPositions).map(([ticker, y]) => (
-            <g key={ticker}>
-              <rect x="756" y={y - 20} width="76" height="40" rx="2" className="flow-security" />
-              <text x="794" y={y + 5} textAnchor="middle" className="flow-security-label">{ticker.slice(0, 8)}</text>
-            </g>
-          ))}
-        </svg>
-        <div className="flow-total">
-          <span>Flow in focus</span>
-          <strong>+{formatMoney(grossFlow)}</strong>
-          <small>largest reported additions</small>
+            ))}
+            {Object.entries(securityPositions).map(([ticker, y]) => (
+              <g key={ticker}>
+                <rect x="756" y={y - 20} width="88" height="40" rx="2" className="flow-security" />
+                <text x="800" y={y + 5} textAnchor="middle" className="flow-security-label">
+                  {ticker.slice(0, 10)}
+                </text>
+              </g>
+            ))}
+          </svg>
+          <div className="flow-total">
+            <span>Top-move reported value</span>
+            <strong className={totals.inflow >= Math.abs(totals.outflow) ? "up" : "down"}>
+              {formatMoney(totals.net, true)}
+            </strong>
+            <small>
+              +{totals.inflowLabel} / {totals.outflowLabel}
+            </small>
+          </div>
         </div>
-      </div>
+      )}
 
-      <div className="timeline-control">
-        <button
-          className="icon-button"
-          onClick={() => periods.length > 1 && setPlaying((value) => !value)}
-          aria-label={playing ? "Pause" : "Play"}
-          disabled={periods.length < 2}
-        >
-          {playing ? <Pause size={15} /> : <Play size={15} />}
-        </button>
-        <div className="timeline-track" style={{ gridTemplateColumns: `repeat(${Math.max(periods.length, 1)}, 1fr)` }}>
-          {periods.map((period, index) => (
-            <button
-              key={period}
-              onClick={() => { setPeriodIndex(index); setPlaying(false); }}
-              className={index === visiblePeriodIndex ? "active" : ""}
-            >
-              <span />
-              {period}
-            </button>
-          ))}
+      <div className="timeline-control static-period">
+        <div className="timeline-track" style={{ gridTemplateColumns: "1fr" }}>
+          <button type="button" className="active" disabled>
+            <span />
+            {periods[0] ?? "Unavailable"}
+          </button>
         </div>
-        <button className="icon-button" onClick={() => setPeriodIndex(0)} aria-label="Reset timeline"><RotateCcw size={14} /></button>
+        <p className="timeline-note">{sampleNote}</p>
       </div>
-      <p className="sr-only">{securities.length} securities represented in the current flow.</p>
+      <p className="sr-only">
+        Showing {streams.length} largest reported moves
+        {streams[0] ? `, led by ${streams[0].security}` : ""}.
+      </p>
     </section>
   );
 }

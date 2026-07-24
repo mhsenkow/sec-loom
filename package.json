@@ -9,6 +9,7 @@
     "build": "tsc -b && vite build",
     "build:pages": "BASE_PATH=/sec-loom/ tsc -b && BASE_PATH=/sec-loom/ vite build",
     "snapshot:export": "node scripts/export-dashboard-snapshot.mjs",
+    "snapshot:verify": "node scripts/verify-chart-snapshot.mjs",
     "preview": "vite preview",
     "lint": "eslint .",
     "typecheck": "tsc -b --pretty false",
